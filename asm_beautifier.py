@@ -5,6 +5,7 @@ import sys
 import argparse
 import datetime
 import json
+import textwrap
 
 parser = argparse.ArgumentParser(
     description="Simple asm formatter for glibc x86_64")
@@ -14,12 +15,17 @@ parser.add_argument("--file",
                     help="File to parse")
 parser.add_argument("-l",
                     action="store_true",
-                    default=False,
+                    default=None,
                     help="Parse from stdin")
 
 parser.add_argument("--no-indent",
                     action="store_true",
                     default=False,
+                    help="Turn off #define indentation")
+
+parser.add_argument("--width",
+                    action="store",
+                    default="",
                     help="Turn off #define indentation")
 
 parser.add_argument("--config",
@@ -35,6 +41,98 @@ parser.add_argument("--none",
 
 def str2bool(v):
     return v.lower() in ("yes", "true", "t", "1")
+
+
+def make_tmp_objdump(config, lines):
+    if config.verify_objfile is False:
+        return None
+    date_marker = str(datetime.datetime.now()).replace(" ", "-").replace(
+        ":", "-").replace(".", "-")
+    tmpfname = ".tmp-objdump-" + date_marker + ".S"
+    assert os.path.exists(
+        tmpfname) is False, "tmpfile already exists with same name: {}".format(
+            tmpfname)
+    assert os.path.exists(
+        tmpfname +
+        ".o") is False, "tmpfile already exists with same name: {}.o".format(
+            tmpfname)
+
+    try:
+        tmpfile = open(tmpfname, "w+")
+        for line in lines:
+            tmpfile.write(line + "\n")
+        tmpfile.flush()
+        tmpfile.close()
+        ret = os.system("gcc -c {} -o {}.o {}".format(tmpfname, tmpfname,
+                                                      "> /dev/null 2>&1"))
+        # Let this fail silently imo
+        if ret != 0:
+            os.system("rm -f {} {}".format(tmpfname, "> /dev/null 2>&1"))
+            os.system("rm -f {}.o".format(tmpfname, {}))
+            return None
+        ret = os.system("objdump -d {}.o > {} {}".format(
+            tmpfname, tmpfname, "2>&1"))
+        os.system("rm -f {}.o {}".format(tmpfname, "> /dev/null 2>&1"))
+        if ret != 0:
+            os.system("rm -f {}".format(tmpfname, "> /dev/null 2>&1"))
+            return None
+
+        return tmpfname
+
+    except IOError:
+        os.system("rm -f {}".format(tmpfname))
+        return ""
+
+
+def verify_tmp_objdump(config, old_fname, lines):
+    if config.verify_objfile is False or old_fname is None:
+        return
+
+    new_fname = make_tmp_objdump(config, lines)
+    error = False
+    if new_fname is None or new_fname == "":
+        error = True
+
+    old_lines = []
+    new_lines = []
+    try:
+        if error is False:
+            start = False
+            for line in open(old_fname):
+                if "Disassembly" in line:
+                    start = True
+                if start is True:
+                    old_lines.append(line)
+            start = False
+            for line in open(new_fname):
+                if "Disassembly" in line:
+                    start = True
+                if start is True:
+                    new_lines.append(line)
+
+    except IOError:
+        os.system("rm -f {} {}".format(new_fname, "> /dev/null 2>&1"))
+        os.system("rm -f {} {}".format(old_fname, "> /dev/null 2>&1"))
+        assert False, "IO Error verify objdump files"
+
+    os.system("rm -f {} {}".format(new_fname, "> /dev/null 2>&1"))
+    os.system("rm -f {} {}".format(old_fname, "> /dev/null 2>&1"))
+
+    if error is False:
+        if len(old_lines) != len(new_lines):
+            error = True
+        for i in range(0, len(old_lines)):
+            if error is True:
+                break
+            if old_lines[i] != new_lines[i]:
+                error = True
+
+    if error:
+        print("##################################")
+        print("ERROR: Formatter bug")
+        print("The underlying objdump file changed after formatting")
+        print("##################################")
+        assert False
 
 
 def make_backup(config, fname, lines):
@@ -80,6 +178,8 @@ class Config():
         self.do_backup = False
         self.padd_indent = True
         self.initial_indent = 0
+        self.verify_objfile = False
+        self.width = 70
         if os.access(self.config_fname, os.R_OK) is True:
             try:
                 config_file = open(self.config_fname, "r")
@@ -90,6 +190,14 @@ class Config():
                     self.do_backup = str2bool(config_data["Backup"])
                 if "Padd_Indent" in config_data:
                     self.padd_indent = str2bool(config_data["Padd_Indent"])
+                if "Objdump_Verify" in config_data:
+                    self.verify_objfile = str2bool(
+                        config_data["Objdump_Verify"])
+                if "Width" in config_data:
+                    try:
+                        self.width = int(config_data["Width"])
+                    except ValueError:
+                        return
                 if "Init_Indent" in config_data:
                     try:
                         self.initial_indent = int(config_data["Init_Indent"])
@@ -100,6 +208,15 @@ class Config():
                 return
 
 
+def end_comment(line):
+    line = line.rstrip().lstrip()
+    assert line[len(line) - 2:] == "*/"
+    line = line[:len(line) - 2].rstrip().lstrip()
+    if line[len(line) - 1:] != ".":
+        line += "."
+    return "\t" + "   " + line + "  */"
+
+            
 class Formatter():
     def __init__(self, conf):
         self.init_def_count = conf.initial_indent
@@ -107,6 +224,9 @@ class Formatter():
 
         self.def_count = self.init_def_count + 1
         self.in_comment = False
+        self.comment_text = ""
+        self.wrap_width = conf.width
+        assert conf.width == -1 or conf.width > 10
 
     def incr_dc(self):
         if self.enable_indent is True:
@@ -130,19 +250,65 @@ class Formatter():
         if len(line) == 0:
             return ""
 
-        # Handle end comment
-        if self.in_comment is True:
-            if "*/" in line:
-                self.in_comment = False
-            if "*/" == line:
-                return "\t " + line.rstrip().rstrip()
-            return "\t" + "   " + line.rstrip().rstrip()
-        # Handle start comment
-        if "/*" in line:
-            if "*/" not in line:
-                self.in_comment = True
-            return "\t" + line.rstrip().lstrip()
+        if self.wrap_width == -1:
+            if self.in_comment is True:
+                if "*/" in line:
+                    self.in_comment = False
+                if "*/" == line:
+                    return "\t */"
+                return end_comment(line)
+            # Handle start comment
+            if "/*" in line:
+                if "*/" not in line:
+                    self.in_comment = True
+                    return "\t" + line.rstrip().lstrip()
+                else:
+                    return end_comment(line)
+        else:
+            finish_comment = False
+            if "/*" in line:
+                assert self.in_comment is False
+                assert self.comment_text == ""
+                self.comment_text = line.rstrip().lstrip()
+                if "*/" in line:
+                    finish_comment = True
+                else:
+                    self.in_comment = True
+                    return None
 
+            elif self.in_comment is True:
+                if self.comment_text != "":
+                    self.comment_text += " "
+                self.comment_text += line.rstrip().lstrip()
+
+                if "*/" in line:
+                    self.in_comment = False
+                    finish_comment = True
+                else:
+                    return None
+
+            if finish_comment is True:
+                assert self.in_comment is False
+                assert self.comment_text.count("/*") == 1
+                assert self.comment_text.count("*/") == 1
+                line = self.comment_text.lstrip().rstrip()
+                self.comment_text = ""
+                line = end_comment(line)
+                line = textwrap.fill(line, width=self.wrap_width)
+
+                lines = line.split("\n")
+                line = "\t" + lines[0].lstrip().rstrip()
+                if len(lines) != 1:
+                    line += "\n"
+                    for i in range(1, len(lines) - 1):
+                        line += "\t   " + lines[i].lstrip().rstrip() + "\n"
+
+                    if lines[len(lines) - 1] == "*/":
+                        line += "\t */"
+                    else:
+                        line += "\t   " + lines[len(lines) -
+                                                1].lstrip().rstrip()
+                return line
         pieces = line.split()
         if "#" in line:
             op = pieces[0]
@@ -186,11 +352,17 @@ args = parser.parse_args()
 asm_fname = args.file
 from_stdin = args.l
 no_indent = args.no_indent
+arg_width = args.width
 
 assert asm_fname is not None or from_stdin is not None
 assert asm_fname is None or from_stdin is None
 
 config = Config(args.config)
+if arg_width != "":
+    try:
+        config.width = int(arg_width)
+    except ValueError:
+        assert False, "width must be an integer"
 
 if no_indent is True:
     config.padd_indent = False
@@ -213,13 +385,19 @@ else:
     asm_file.close()
 
 make_backup(config, asm_fname, lines)
-
 if len(lines) != 0:
+    tmpfname = make_tmp_objdump(config, lines)
+    assert tmpfname != "", "Error making objdump"
+
     lines_out = []
 
     formatter = Formatter(config)
     for line in lines:
-        lines_out.append(formatter.fmt_line(line))
+        out = formatter.fmt_line(line)
+        if out is not None:
+            lines_out.append(out)
+
+    verify_tmp_objdump(config, tmpfname, lines_out)
 
     assert formatter.valid()
     for line in lines_out:
