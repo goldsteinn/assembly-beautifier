@@ -210,13 +210,23 @@ class Config():
 
 def end_comment(line):
     line = line.rstrip().lstrip()
+    spaces = "   "
+    if "/*" in line:
+        assert line[:2] == "/*"
+        assert line[:2] + line[2:] == line
+
+        spaces = "/* "
+        line = line[2:]
+    line = line.rstrip().lstrip()
     assert line[len(line) - 2:] == "*/"
-    line = line[:len(line) - 2].rstrip().lstrip()
+    assert line[:len(line) - 2] + line[len(line) - 2:] == line
+    line = line[:len(line) - 2]
+    line = line.rstrip().lstrip()
     if line[len(line) - 1:] != ".":
         line += "."
-    return "\t" + "   " + line + "  */"
+    return "\t" + spaces + line + "  */"
 
-            
+
 class Formatter():
     def __init__(self, conf):
         self.init_def_count = conf.initial_indent
