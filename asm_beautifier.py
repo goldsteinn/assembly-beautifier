@@ -218,7 +218,7 @@ def end_comment(line):
         spaces = "/* "
         line = line[2:]
     line = line.rstrip().lstrip()
-    assert line[len(line) - 2:] == "*/"
+    assert line[len(line) - 2:] == "*/", line
     assert line[:len(line) - 2] + line[len(line) - 2:] == line
     line = line[:len(line) - 2]
     line = line.rstrip().lstrip()
@@ -229,6 +229,8 @@ def end_comment(line):
 
 class Formatter():
     def __init__(self, conf):
+        self.TABLEN = 8
+
         self.init_def_count = conf.initial_indent
         self.enable_indent = conf.padd_indent
 
@@ -236,6 +238,9 @@ class Formatter():
         self.in_comment = False
         self.comment_text = ""
         self.wrap_width = conf.width
+
+        self.first_line = False
+        self.skipping_first_comment = False
         assert conf.width == -1 or conf.width > 10
 
     def incr_dc(self):
@@ -256,17 +261,34 @@ class Formatter():
                 1) == self.def_count and self.in_comment is False
 
     def fmt_line(self, line):
+        original_line = line
         line = line.replace("\n", "").lstrip().rstrip()
         if len(line) == 0:
             return ""
 
+        if self.first_line is False and line[:2] == "/*":
+            self.first_line = True
+            if "*/" not in line:
+                self.skipping_first_comment = True
+            return original_line.rstrip()
+        else:
+            self.first_line = False
+
+        if self.skipping_first_comment is True:
+            if "*/" in line:
+                self.skipping_first_comment = False
+            return original_line.rstrip()
+
+        
+            
         if self.wrap_width == -1:
             if self.in_comment is True:
                 if "*/" in line:
                     self.in_comment = False
-                if "*/" == line:
-                    return "\t */"
-                return end_comment(line)
+                    if "*/" == line:
+                        return "\t */"
+                    return end_comment(line)
+                return "\t   " + line.rstrip().lstrip()
             # Handle start comment
             if "/*" in line:
                 if "*/" not in line:
@@ -344,15 +366,20 @@ class Formatter():
 
             return line
 
-        if ":" in line:
+        if ":" in line or ("END (" in line or "END(" in line or "END\t("
+                           in line) or ("ENTRY (" in line or "ENTRY(" in line
+                                        or "ENTRY\t(" in line):
             return fmt_pieces(pieces, "")
 
-        if "." in line:
+        if ".cfi_" in line:
             return "\t" + fmt_pieces(pieces, " ")
 
         line = "\t" + pieces[0]
         if len(pieces) != 1:
-            line += "\t" + fmt_pieces(pieces[1:], " ")
+            prefix = "\t"
+            if len(pieces[0]) >= self.TABLEN:
+                prefix = " "
+            line += prefix + fmt_pieces(pieces[1:], " ")
         return line
 
 
