@@ -40,7 +40,8 @@ in `.emacs` should do the trick
 - Stored as json
 - Default path: `/path/to/home/.config/abf.json` **Note to use dynamic config must actually specify path to home. There is a bug in `abfify.el` that requires that**.
 - Possible variables:
-    - "Width": <Integer, set at value for max comment length for wrapping comments. -1 will disable wrapping comments. Default = 70>
+    - "Width": <Integer, set at value for max comment length for wrapping comments. -1 will disable wrapping comments. Default = 64>
+    - "Skip_Header": <Boolean, set if you don't want to format header comments. This is nice for GLIBC licenses. Default = True>
     - "Objdump_Verify": <Boolean, set if you want to compare result of objdump before and after formatting before writing over buffer to make sure no bugs>
     - "Backup_Path": <If you are rightly so afraid this program might delete your file / w.e this will copy your file before doing anything else>
     - "Backup": <Boolean to specify if you want to use this backup path feature>
@@ -79,7 +80,10 @@ Example config:
     "Backup_Path": "/home/noah/.tmp/asm_beautifier/",
     "Backup": "True",
     "Padd_Indent": "True",
-    "Init_Indent": "1",
-    "Objdump_Verify": "False"
+    "Init_Indent": "0",
+    "Objdump_Verify": "False",
+    "Width": "58",
+    "Skip_Header": "True"
 }
+
 ```
