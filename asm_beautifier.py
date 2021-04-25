@@ -179,7 +179,8 @@ class Config():
         self.padd_indent = True
         self.initial_indent = 0
         self.verify_objfile = False
-        self.width = 70
+        self.width = 64
+        self.skip_header = True
         if os.access(self.config_fname, os.R_OK) is True:
             try:
                 config_file = open(self.config_fname, "r")
@@ -193,6 +194,8 @@ class Config():
                 if "Objdump_Verify" in config_data:
                     self.verify_objfile = str2bool(
                         config_data["Objdump_Verify"])
+                if "Skip_Header" in config_data:
+                    self.skip_header = str2bool(config_data["Skip_Header"])
                 if "Width" in config_data:
                     try:
                         self.width = int(config_data["Width"])
@@ -239,7 +242,7 @@ class Formatter():
         self.comment_text = ""
         self.wrap_width = conf.width
 
-        self.first_line = False
+        self.first_line = not conf.skip_header
         self.skipping_first_comment = False
         assert conf.width == -1 or conf.width > 10
 
