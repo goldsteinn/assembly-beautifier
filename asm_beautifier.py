@@ -6,6 +6,7 @@ import argparse
 import datetime
 import json
 import textwrap
+import copy
 
 parser = argparse.ArgumentParser(
     description="Simple asm formatter for glibc x86_64")
@@ -161,8 +162,9 @@ def make_backup(config, fname, lines):
 
 def fmt_pieces(pieces, seperator):
     out = ""
-    for piece in pieces:
-        out += piece + seperator
+    for i in range(0, len(pieces) - 1):
+        out += pieces[i] + seperator
+    out += pieces[len(pieces) - 1]
 
     return out.rstrip().lstrip()
 
@@ -274,14 +276,14 @@ class Formatter():
             if "*/" not in line:
                 self.skipping_first_comment = True
             return original_line.rstrip()
+        else:
+            self.first_line = False
 
         if self.skipping_first_comment is True:
             if "*/" in line:
                 self.skipping_first_comment = False
             return original_line.rstrip()
 
-        
-            
         if self.wrap_width == -1:
             if self.in_comment is True:
                 if "*/" in line:
@@ -375,12 +377,27 @@ class Formatter():
         if ".cfi_" in line:
             return "\t" + fmt_pieces(pieces, " ")
 
+        extra = ""
+        if ".section" not in line:
+            tmp_pieces = []
+            for i in range(0, len(pieces)):
+                if pieces[i] == ",":
+                    continue
+                if "{" in pieces[i] and "}" in pieces[i] and len(
+                        pieces[i]) < 8 and ("k" in pieces[i]
+                                            or "z" in pieces[i]):
+                    tmp_pieces[len(tmp_pieces) - 1] += pieces[i]
+                else:
+                    tmp_pieces.append(pieces[i].replace(",", ""))
+            extra = ","
+            pieces = tmp_pieces
+
         line = "\t" + pieces[0]
         if len(pieces) != 1:
             prefix = "\t"
             if len(pieces[0]) >= self.TABLEN:
                 prefix = " "
-            line += prefix + fmt_pieces(pieces[1:], " ")
+            line += prefix + fmt_pieces(pieces[1:], extra + " ")
         return line
 
 
