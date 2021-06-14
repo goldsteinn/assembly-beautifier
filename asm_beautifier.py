@@ -276,8 +276,6 @@ class Formatter():
             if "*/" not in line:
                 self.skipping_first_comment = True
             return original_line.rstrip()
-        else:
-            self.first_line = False
 
         if self.skipping_first_comment is True:
             if "*/" in line:
