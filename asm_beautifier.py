@@ -213,6 +213,29 @@ class Config():
                 return
 
 
+def comment_wrap(line, wraplen, tablen):
+    startline = "\t *"
+    words_out = ["\t"]
+    words = line.split()
+    line_len = tablen + 3
+    for word in words:
+        wlen = len(word)
+        if line_len + wlen > wraplen:
+            words_out.append("\n")
+            if word == "*/":
+                words_out.append("\t */")
+                break
+            words_out.append(startline)
+            line_len = tablen + 3
+        words_out.append(" " + word)
+        line_len += (wlen + 1)
+
+    line = ""
+    for word in words_out:
+        line += word
+    return line
+
+
 def end_comment(line):
     line = line.rstrip().lstrip()
     spaces = "   "
@@ -246,7 +269,14 @@ class Formatter():
 
         self.first_line = not conf.skip_header
         self.skipping_first_comment = False
+        self.tokens = ["*", "/", "+", "<<", ">>", ","]
+
         assert conf.width == -1 or conf.width > 10
+
+    def expand_tokens(self, line):
+        for token in self.tokens:
+            line = line.replace(token, " " + token + " ")
+        return line
 
     def incr_dc(self):
         if self.enable_indent is True:
@@ -270,6 +300,36 @@ class Formatter():
         line = line.replace("\n", "").lstrip().rstrip()
         if len(line) == 0:
             return ""
+        if self.in_comment is False and (
+                len(line.replace("//", "")) == 0 or len(
+                    line.replace("/*", "").replace("*/", "").lstrip().rstrip())
+                == 0 or line.replace("/*", "").replace(
+                    "*/", "").lstrip().rstrip() == "."):
+            return ""
+        if "//" in line and self.in_comment is False:
+            if "/*" not in line or ("/*" in line and
+                                    (line.find("/*") < line.find("//"))):
+                pos = line.find("//")
+
+                line_content = line[:line.find("//")]
+                line_comment = line[line.find("//") + 2:]
+                assert "//" not in line_content
+                line_comment = line_comment.lstrip().rstrip()
+
+                line_content = self.fmt_line(line_content)
+                if line_content == "" and self.wrap_width != int(-1):
+                    line_comment = line_comment[2:]
+                    lines = textwrap.fill(line_comment,
+                                          width=self.wrap_width).split("\n")
+                    line_comment = lines[0].lstrip().rstrip()
+                    if len(lines) != 1:
+                        line_comment += "\n"
+                        for i in range(1, len(lines) - 1):
+                            line_comment += "\t// " + lines[i].lstrip().rstrip(
+                            ) + "\n"
+                        line_comment += "\t// " + lines[len(lines) -
+                                                        1].lstrip().rstrip()
+                return line_content + "\t// " + line_comment
 
         if self.first_line is False and line[:2] == "/*":
             self.first_line = True
@@ -326,9 +386,9 @@ class Formatter():
                 assert self.comment_text.count("*/") == 1
                 line = self.comment_text.lstrip().rstrip()
                 self.comment_text = ""
-                line = end_comment(line)
+                #line = comment_wrap(line, self.wrap_width, self.TABLEN)
+                line = end_comment(line).lstrip().rstrip()
                 line = textwrap.fill(line, width=self.wrap_width)
-
                 lines = line.split("\n")
                 line = "\t" + lines[0].lstrip().rstrip()
                 if len(lines) != 1:
@@ -367,35 +427,38 @@ class Formatter():
 
             return line
 
-        if ":" in line or ("END (" in line or "END(" in line or "END\t("
-                           in line) or ("ENTRY (" in line or "ENTRY(" in line
-                                        or "ENTRY\t(" in line):
+        if ":" in line and "." in line and not (
+                "END (" in line or "END(" in line or "END\t(" in line) or (
+                    "ENTRY (" in line or "ENTRY(" in line
+                    or "ENTRY\t(" in line):
+
+            line = line.replace(":.", ": .")
+            pieces = line.split()
+            return pieces[0] + "\t" + fmt_pieces(pieces[1:], " ")
+        if (":" in line) or ("END (" in line or "END(" in line or "END\t("
+                             in line) or ("ENTRY (" in line or "ENTRY(" in line
+                                          or "ENTRY\t(" in line):
             return fmt_pieces(pieces, "")
 
         if ".cfi_" in line:
             return "\t" + fmt_pieces(pieces, " ")
 
-        extra = ""
-        if ".section" not in line:
-            tmp_pieces = []
-            for i in range(0, len(pieces)):
-                if pieces[i] == ",":
-                    continue
-                if "{" in pieces[i] and "}" in pieces[i] and len(
-                        pieces[i]) < 8 and ("k" in pieces[i]
-                                            or "z" in pieces[i]):
-                    tmp_pieces[len(tmp_pieces) - 1] += pieces[i]
-                else:
-                    tmp_pieces.append(pieces[i].replace(",", ""))
-            extra = ","
-            pieces = tmp_pieces
-
+        line = self.expand_tokens(line)
+        pieces_init = line.split()
+        pieces = []
+        for piece in pieces_init:
+            if "{" in piece[0] and "}" == piece[len(piece) - 1] in piece and (
+                    "k" in piece or "z" in piece):
+                pieces[len(pieces) - 1] += piece
+            else:
+                pieces.append(piece)
         line = "\t" + pieces[0]
         if len(pieces) != 1:
             prefix = "\t"
             if len(pieces[0]) >= self.TABLEN:
                 prefix = " "
-            line += prefix + fmt_pieces(pieces[1:], extra + " ")
+            line += prefix + fmt_pieces(pieces[1:], " ")
+        line = line.replace(" ,", ",")
         return line
 
 
