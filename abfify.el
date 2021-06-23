@@ -46,7 +46,7 @@
   :type 'string
   :group 'abfify)
 
-(defun abfify-call-bin (input-buffer output-buffer start-line end-line arg3)
+(defun abfify-call-bin (input-buffer output-buffer start-line end-line arg3 arg4)
   "Call process abf on INPUT-BUFFER saving the output to OUTPUT-BUFFER.
 
 Return the exit code.  START-LINE and END-LINE specify region to
@@ -54,7 +54,8 @@ format."
   (with-current-buffer input-buffer
     (call-process-region (point-min) (point-max)
                          abfify-executable nil output-buffer
-                         nil "-l" arg3)))
+                         nil "-l" "--lines" (concat (number-to-string start-line) ","
+                                                    (number-to-string end-line)) arg3 arg4)))
 
 (defun get-buffer-string (buffer)
   "Return the contents of BUFFER."
@@ -62,7 +63,7 @@ format."
     (buffer-string)))
 
 ;;;###autoload
-(defun abfify-region-kernel (beginning end arg3)
+(defun abfify-region-kernel (beginning end arg3 arg4)
   "Try to abfify the current region.
 
 If abf exits with an error, the output will be shown in a help-window."
@@ -80,7 +81,7 @@ If abf exits with an error, the output will be shown in a help-window."
                                          end)))
 
          (tmpbuf (get-buffer-create "*abfify*"))
-         (exit-code (abfify-call-bin original-buffer tmpbuf start-line end-line arg3)))
+         (exit-code (abfify-call-bin original-buffer tmpbuf start-line end-line arg3 arg4)))
     (deactivate-mark)
     ;; There are three exit-codes defined for ABF:
     ;; 0: Exit with success (change or no change on abf >=0.11)
@@ -93,7 +94,7 @@ If abf exits with an error, the output will be shown in a help-window."
           ((eq exit-code 1)
            (error "Abf failed, see %s buffer for details" (buffer-name tmpbuf))))
     ;; Clean up tmpbuf
-    (kill-buffer tmpbuf)
+    ;;(kill-buffer tmpbuf)
     ;; restore window to similar state
     (goto-char original-point)
     (cl-mapcar 'set-window-start buffer-windows original-window-pos))) 
@@ -102,20 +103,21 @@ If abf exits with an error, the output will be shown in a help-window."
 (defun abfify-buffer ()
   "Abfify whole buffer."
   (interactive)
-  (abfify-region-kernel (point-min) (point-max) "--none"))
+  (abfify-region-kernel (point-min) (point-max) "--none" "--none"))
 
 ;;;###autoload
 (defun abfify-region ()
   "Abfify whole buffer."
   (interactive)
-  (abfify-region-kernel (point-min) (point-max) "--no-indent"))
+  (message "aasdadfsdfs")
+  (abfify-region-kernel (region-beginning) (region-end) "--no-indent" "--no-skip"))
 
 ;;;###autoload
 (defun abfify-region-or-buffer ()
   "Abfify the region if it is active. Otherwise, abfify the buffer"
   (interactive)
   (if (region-active-p)
-      (abfify-region-kernel (region-beginning) (region-end) "--no-indent")
+      (abfify-region-kernel (region-beginning) (region-end) "--no-indent" "--no-skip")
     (abfify-buffer)))
 
 ;;;###autoload

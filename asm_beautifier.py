@@ -19,15 +19,25 @@ parser.add_argument("-l",
                     default=None,
                     help="Parse from stdin")
 
+parser.add_argument("--lines",
+                    action="store",
+                    default=None,
+                    help="Lines to actually format")
+
 parser.add_argument("--no-indent",
                     action="store_true",
                     default=False,
                     help="Turn off #define indentation")
 
+parser.add_argument("--no-skip",
+                    action="store_true",
+                    default=False,
+                    help="Don't skip leading comments")
+
 parser.add_argument("--width",
                     action="store",
                     default="",
-                    help="Turn off #define indentation")
+                    help="Set comment wrap width")
 
 parser.add_argument("--config",
                     action="store",
@@ -176,6 +186,8 @@ class Config():
             self.config_fname = config_fname
 
         # Defaults
+        self.start = None
+        self.end = None
         self.backup_path = None
         self.do_backup = False
         self.padd_indent = True
@@ -270,7 +282,9 @@ class Formatter():
         self.first_line = not conf.skip_header
         self.skipping_first_comment = False
         self.tokens = ["*", "/", "+", "<<", ">>", ","]
-
+        self.line_count = 0
+        self.start = conf.start
+        self.end = conf.end
         assert conf.width == -1 or conf.width > 10
 
     def expand_tokens(self, line):
@@ -297,16 +311,23 @@ class Formatter():
 
     def fmt_line(self, line):
         original_line = line
+        self.line_count += 1
+        if self.start is not None and self.end is not None:
+            if self.line_count < self.start:
+                return original_line.replace("\n", "")
+            if self.line_count > self.end:
+                return original_line.replace("\n", "")
+
         line = line.replace("\n", "").lstrip().rstrip()
         if len(line) == 0:
             return ""
-        if self.in_comment is False and (
-                len(line.replace("//", "")) == 0 or len(
-                    line.replace("/*", "").replace("*/", "").lstrip().rstrip())
-                == 0 or line.replace("/*", "").replace(
-                    "*/", "").lstrip().rstrip() == "."):
+        if self.in_comment is False and (line.replace(
+                "//", "") == "" or line.replace("/*", "").replace(
+                    "*/", "").lstrip().rstrip() == "" or line.replace(
+                        "/*", "").replace("*/", "").lstrip().rstrip() == "."):
             return ""
         if "//" in line and self.in_comment is False:
+            self.first_line = True
             if "/*" not in line or ("/*" in line and
                                     (line.find("/*") < line.find("//"))):
                 pos = line.find("//")
@@ -315,10 +336,9 @@ class Formatter():
                 line_comment = line[line.find("//") + 2:]
                 assert "//" not in line_content
                 line_comment = line_comment.lstrip().rstrip()
-
+                self.line_count -= 1
                 line_content = self.fmt_line(line_content)
                 if line_content == "" and self.wrap_width != int(-1):
-                    line_comment = line_comment[2:]
                     lines = textwrap.fill(line_comment,
                                           width=self.wrap_width).split("\n")
                     line_comment = lines[0].lstrip().rstrip()
@@ -402,6 +422,7 @@ class Formatter():
                         line += "\t   " + lines[len(lines) -
                                                 1].lstrip().rstrip()
                 return line
+        self.first_line = True
         pieces = line.split()
         if "#" in line:
             op = pieces[0]
@@ -468,7 +489,12 @@ args = parser.parse_args()
 asm_fname = args.file
 from_stdin = args.l
 no_indent = args.no_indent
+no_skip = args.no_skip
 arg_width = args.width
+line_bounds = args.lines
+skip_line_bounds = args.none
+if skip_line_bounds is True:
+    line_bounds = None
 
 assert asm_fname is not None or from_stdin is not None
 assert asm_fname is None or from_stdin is None
@@ -482,7 +508,8 @@ if arg_width != "":
 
 if no_indent is True:
     config.padd_indent = False
-
+if no_skip is True:
+    config.skip_header = False
 if asm_fname is None:
     lines = sys.stdin.readlines()
 else:
@@ -505,6 +532,11 @@ if len(lines) != 0:
     tmpfname = make_tmp_objdump(config, lines)
     assert tmpfname != "", "Error making objdump"
 
+    if line_bounds is not None and line_bounds != "":
+        start = int(line_bounds.split(",")[0])
+        end = int(line_bounds.split(",")[1])
+        config.start = start
+        config.end = end
     lines_out = []
 
     formatter = Formatter(config)
