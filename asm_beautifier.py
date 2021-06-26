@@ -267,6 +267,11 @@ def end_comment(line):
     return "\t" + spaces + line + "  */"
 
 
+def entry_end_line(line):
+    res = "END (" in line or "END(" in line or "END\t(" in line or "ENTRY (" in line or "ENTRY(" in line or "ENTRY\t(" in line
+    return res
+
+
 class Formatter():
     def __init__(self, conf):
         self.TABLEN = 8
@@ -435,6 +440,7 @@ class Formatter():
             if "endif" == op:
                 self.decr_dc()
             pad_count = self.dc()
+
             if self.enable_indent is True and ("else" == op or "elif" == op):
                 pad_count -= 1
 
@@ -448,17 +454,12 @@ class Formatter():
 
             return line
 
-        if ":" in line and "." in line and not (
-                "END (" in line or "END(" in line or "END\t(" in line) or (
-                    "ENTRY (" in line or "ENTRY(" in line
-                    or "ENTRY\t(" in line):
+        if (":" in line) and ("." in line) and not entry_end_line(line):
 
             line = line.replace(":.", ": .")
             pieces = line.split()
             return pieces[0] + "\t" + fmt_pieces(pieces[1:], " ")
-        if (":" in line) or ("END (" in line or "END(" in line or "END\t("
-                             in line) or ("ENTRY (" in line or "ENTRY(" in line
-                                          or "ENTRY\t(" in line):
+        if (":" in line) or entry_end_line(line):
             return fmt_pieces(pieces, "")
 
         if ".cfi_" in line:
