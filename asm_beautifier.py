@@ -252,8 +252,8 @@ def end_comment(line):
     line = line.rstrip().lstrip()
     spaces = "   "
     if "/*" in line:
-        assert line[:2] == "/*"
-        assert line[:2] + line[2:] == line
+        assert line[:2] == "/*", line
+        assert line[:2] + line[2:] == line, line
 
         spaces = "/* "
         line = line[2:]
@@ -268,7 +268,12 @@ def end_comment(line):
 
 
 def entry_end_line(line):
-    res = "END (" in line or "END(" in line or "END\t(" in line or "ENTRY (" in line or "ENTRY(" in line or "ENTRY\t(" in line
+    line = line.lstrip().rstrip()
+    res = "END (" == line[0:5] or "END(" == line[0:4] or "END\t(" == line[
+        0:5] or "ENTRY (" == line[0:7] or "ENTRY(" == line[
+            0:6] or "ENTRY\t(" == line[0:7] or "P2ALIGN_ENTRY (" == line[
+                0:15] or "P2ALIGN_ENTRY(" == line[
+                    0:14] or "P2ALIGN_ENTRY\t(" == line[0:15]
     return res
 
 
@@ -276,6 +281,7 @@ class Formatter():
     def __init__(self, conf):
         self.TABLEN = 8
 
+        self.original_line = ""
         self.init_def_count = conf.initial_indent
         self.enable_indent = conf.padd_indent
 
@@ -291,6 +297,8 @@ class Formatter():
         self.start = conf.start
         self.end = conf.end
         assert conf.width == -1 or conf.width > 10
+        self.lost_ifdef = ""
+        self.lost_ifdef_line = 0
 
     def expand_tokens(self, line):
         for token in self.tokens:
@@ -299,6 +307,9 @@ class Formatter():
 
     def incr_dc(self):
         if self.enable_indent is True:
+            if self.def_count == self.init_def_count + 1:
+                self.lost_ifdef = self.original_line
+                self.lost_ifdef_line = self.line_count
             self.def_count += 1
 
     def decr_dc(self):
@@ -311,25 +322,30 @@ class Formatter():
         return self.init_def_count
 
     def valid(self):
-        return (self.init_def_count +
-                1) == self.def_count and self.in_comment is False
+        if not (self.init_def_count + 1) == self.def_count:
+            print("Missing endif for\n\t[{}]: {} ".format(
+                self.lost_ifdef_line, self.lost_ifdef))
+            return False
+        return self.in_comment is False
 
     def fmt_line(self, line):
-        original_line = line
+        self.original_line = line
         self.line_count += 1
         if self.start is not None and self.end is not None:
             if self.line_count < self.start:
-                return original_line.replace("\n", "")
+                return self.original_line.replace("\n", "")
             if self.line_count > self.end:
-                return original_line.replace("\n", "")
+                return self.original_line.replace("\n", "")
 
         line = line.replace("\n", "").lstrip().rstrip()
         if len(line) == 0:
             return ""
-        if self.in_comment is False and (line.replace(
-                "//", "") == "" or line.replace("/*", "").replace(
-                    "*/", "").lstrip().rstrip() == "" or line.replace(
-                        "/*", "").replace("*/", "").lstrip().rstrip() == "."):
+        if self.in_comment is False and (line.replace("//", "") == "" or (
+            ("/*" in line and "*/" in line
+             and line.find("/*") < line.find("*/")) and line.replace(
+                 "/*", "").replace("*/", "").lstrip().rstrip() == ""
+                or line.replace("/*", "").replace(
+                    "*/", "").lstrip().rstrip() == ".")):
             return ""
         if "//" in line and self.in_comment is False:
             self.first_line = True
@@ -360,12 +376,12 @@ class Formatter():
             self.first_line = True
             if "*/" not in line:
                 self.skipping_first_comment = True
-            return original_line.rstrip()
+            return self.original_line.rstrip()
 
         if self.skipping_first_comment is True:
             if "*/" in line:
                 self.skipping_first_comment = False
-            return original_line.rstrip()
+            return self.original_line.rstrip()
 
         if self.wrap_width == -1:
             if self.in_comment is True:
@@ -460,7 +476,7 @@ class Formatter():
             pieces = line.split()
             return pieces[0] + "\t" + fmt_pieces(pieces[1:], " ")
         if (":" in line) or entry_end_line(line):
-            return fmt_pieces(pieces, "")
+            return fmt_pieces(pieces, " ")
 
         if ".cfi_" in line:
             return "\t" + fmt_pieces(pieces, " ")
