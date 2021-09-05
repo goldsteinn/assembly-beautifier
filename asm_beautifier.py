@@ -284,12 +284,12 @@ class Formatter():
         self.original_line = ""
         self.init_def_count = conf.initial_indent
         self.enable_indent = conf.padd_indent
-
+        self.disabled = False
         self.def_count = self.init_def_count + 1
         self.in_comment = False
         self.comment_text = ""
         self.wrap_width = conf.width
-
+        self.abf_strip = False
         self.first_line = not conf.skip_header
         self.skipping_first_comment = False
         self.tokens = ["*", "/", "+", "<<", ">>", ","]
@@ -328,6 +328,31 @@ class Formatter():
             return False
         return self.in_comment is False
 
+    def check_directive(self, line, content):
+        pieces = line.split()
+        if len(pieces) == 2:
+            if pieces[0] == "//" and pieces[1] == content:
+                return True
+        if len(pieces) == 1:
+            if pieces[0] == "//" + content:
+                return True
+        return False
+
+    def check_disabled(self, line):
+        content = "abf-off"
+        if self.disabled is True:
+            content = "abf-on"
+        ret = self.check_directive(line, content)
+        if ret:
+            self.disabled = not self.disabled
+        return ret
+
+    def check_strip(self, line):
+        ret = self.check_directive(line, "abf-strip")
+        if ret:
+            self.abf_strip = True
+        return ret
+
     def fmt_line(self, line):
         self.original_line = line
         self.line_count += 1
@@ -340,6 +365,29 @@ class Formatter():
         line = line.replace("\n", "").lstrip().rstrip()
         if len(line) == 0:
             return ""
+        if self.check_strip(line):
+            self.abf_strip = True
+            return None
+
+        if self.check_disabled(line):
+            if self.abf_strip is False:
+                return "// " + line.replace("//", "").lstrip().rstrip()
+            else:
+                return None
+        if self.disabled is True:
+            return self.original_line.replace("\n", "")
+
+        if self.first_line is False and line[:2] == "/*":
+            self.first_line = True
+            if "*/" not in line:
+                self.skipping_first_comment = True
+            return self.original_line.rstrip()
+
+        if self.skipping_first_comment is True:
+            if "*/" in line:
+                self.skipping_first_comment = False
+            return self.original_line.rstrip()
+
         if self.in_comment is False and (line.replace("//", "") == "" or (
             ("/*" in line and "*/" in line
              and line.find("/*") < line.find("*/")) and line.replace(
@@ -371,17 +419,6 @@ class Formatter():
                         line_comment += "\t// " + lines[len(lines) -
                                                         1].lstrip().rstrip()
                 return line_content + "\t// " + line_comment
-
-        if self.first_line is False and line[:2] == "/*":
-            self.first_line = True
-            if "*/" not in line:
-                self.skipping_first_comment = True
-            return self.original_line.rstrip()
-
-        if self.skipping_first_comment is True:
-            if "*/" in line:
-                self.skipping_first_comment = False
-            return self.original_line.rstrip()
 
         if self.wrap_width == -1:
             if self.in_comment is True:
@@ -453,6 +490,10 @@ class Formatter():
                 start = 2
             op = op.replace("#", "")
 
+            assert op in [
+                "else", "elif", "define", "if", "ifdef", "ifndef", "endif",
+                "include", "error"
+            ], "{} -> {}".format(self.line_count, self.original_line)
             if "endif" == op:
                 self.decr_dc()
             pad_count = self.dc()
@@ -467,7 +508,6 @@ class Formatter():
                 line += " " + fmt_pieces(pieces[start:], " ")
             if "ifdef" == op or "ifndef" == op or "if" == op:
                 self.incr_dc()
-
             return line
 
         if (":" in line) and ("." in line) and not entry_end_line(line):
