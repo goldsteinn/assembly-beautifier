@@ -1,6 +1,21 @@
+# This file is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published
+# by the Free Software Foundation; either version 3, or (at your
+# option) any later version.
+#
+# This file is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# For a full copy of the GNU General Public License
+# see <http://www.gnu.org/licenses/>.
+
+
 #! /usr/bin/env python3
 
 import os
+import re
 import sys
 import argparse
 import datetime
@@ -159,6 +174,7 @@ def make_backup(config, fname, lines):
 
     backup_path = config.backup_path
     backup_fname = "{}/{}".format(backup_path, fname)
+    backup_path = os.path.dirname(backup_fname)
     assert os.system("mkdir -p {}".format(backup_path)) == 0
     try:
         backup_file = open(backup_fname, "w+")
@@ -171,9 +187,12 @@ def make_backup(config, fname, lines):
 
 
 def fmt_pieces(pieces, seperator):
+    if pieces == []:
+        return ""
     out = ""
     for i in range(0, len(pieces) - 1):
         out += pieces[i] + seperator
+
     out += pieces[len(pieces) - 1]
 
     return out.rstrip().lstrip()
@@ -267,14 +286,24 @@ def end_comment(line):
     return "\t" + spaces + line + "  */"
 
 
-def entry_end_line(line):
+def check_entry_end_line(line, directive):
     line = line.lstrip().rstrip()
-    res = "END (" == line[0:5] or "END(" == line[0:4] or "END\t(" == line[
-        0:5] or "ENTRY (" == line[0:7] or "ENTRY(" == line[
-            0:6] or "ENTRY\t(" == line[0:7] or "P2ALIGN_ENTRY (" == line[
-                0:15] or "P2ALIGN_ENTRY(" == line[
-                    0:14] or "P2ALIGN_ENTRY\t(" == line[0:15]
-    return res
+    dlen = len(directive)
+    if line[0:dlen] != directive:
+        return False
+    if "(" not in line or ")" not in line:
+        return False
+    assert line.count("(") == line.count(")")
+
+    return True
+    expec_paren = line[dlen:].lstrip().rstrip()
+    return expec_paren.count("(") == 1 and expec_paren.count(")") == 1
+
+
+def entry_end_line(line):
+    return check_entry_end_line(line, "END") or check_entry_end_line(
+        line, "ENTRY") or check_entry_end_line(
+            line, "ENTRY_") or check_entry_end_line(line, "P2ALIGN_ENTRY")
 
 
 class Formatter():
@@ -292,7 +321,9 @@ class Formatter():
         self.abf_strip = False
         self.first_line = not conf.skip_header
         self.skipping_first_comment = False
-        self.tokens = ["*", "/", "+", "<<", ">>", ","]
+
+        self.merge_comments = False
+
         self.line_count = 0
         self.start = conf.start
         self.end = conf.end
@@ -300,9 +331,36 @@ class Formatter():
         self.lost_ifdef = ""
         self.lost_ifdef_line = 0
 
+        self.operators = ["*", "/", "+", "<<", ">>"]
+        self.expand_right_tokens = [","] + self.operators
+        self.expand_left_tokens = self.expand_right_tokens
+
+        self.cleanup_tokens = ["(", ")", "[", "]", "{", "}", ",", ";"]
+
+    def organize_paren(self, line):
+        if "(" not in line:
+            return line
+        first = line.find("(")
+        line = line[:first] + " (" + line[first + 1:]
+        first_token = line.split()[0]
+        rest = " ".join(line.split()[1:])
+        rest = rest.replace(" (", "(")
+        out = first_token + " " + rest
+        out = out.replace(",(", ", (")
+        return out
+
+    def cleanup_ws_tokens(self, line):
+        for token in self.cleanup_tokens:
+            re_fmt = "[\\s|\\t]*\\{}[\\s|\\t]*".format(token)
+            line = re.sub(re_fmt, token, line)
+
+        return line
+
     def expand_tokens(self, line):
-        for token in self.tokens:
-            line = line.replace(token, " " + token + " ")
+        for token in self.expand_left_tokens:
+            line = line.replace(token, " " + token)
+        for token in self.expand_right_tokens:
+            line = line.replace(token, token + " ")
         return line
 
     def incr_dc(self):
@@ -398,7 +456,7 @@ class Formatter():
         if "//" in line and self.in_comment is False:
             self.first_line = True
             if "/*" not in line or ("/*" in line and
-                                    (line.find("/*") < line.find("//"))):
+                                    (line.find("/*") > line.find("//"))):
                 pos = line.find("//")
 
                 line_content = line[:line.find("//")]
@@ -420,6 +478,44 @@ class Formatter():
                                                         1].lstrip().rstrip()
                 return line_content + "\t// " + line_comment
 
+        if ("/*" in line and "*/" in line) and (self.in_comment is False) and (
+                line[:2] != "/*" or line[len(line) - 2:] != "*/"):
+            if "//" not in line or ("//" in line
+                                    and line.find("//") > line.find("/*")):
+                comment_start = line.find("/*")
+                comment_end = line.rfind("*/")
+                line_content0 = line[:comment_start]
+                line_content1 = line[comment_end + 2:]
+                block_comment = line[comment_start:comment_end + 2]
+
+                assert "/*" not in line_content0
+                assert "*/" not in line_content0
+
+                assert "/*" not in line_content1
+                assert "*/" not in line_content1
+
+                assert block_comment.count("*/") == 1
+                assert block_comment.count("/*") == 1
+
+                line_content0 = self.fmt_line(line_content0)
+                line_content1 = self.fmt_line(line_content1)
+                if line_content0 == "" and line_content1 == "" and self.wrap_width != int(
+                        -1):
+                    # Not supported for now
+                    assert False
+                    lines = textwrap.fill(block_comment,
+                                          width=self.wrap_width).split("\n")
+                    block_comment = ""
+                    for i in range(0, len(lines) - 1):
+                        block_comment += "\t /*" + lines[i].lstrip().rstrip(
+                        ) + "\n"
+                    block_comment += end_comment(lines[len(lines) - 1])
+                    return block_comment
+                s = line_content0 + "\t" + end_comment(
+                    block_comment) + "\t" + line_content1
+                s = s.rstrip()
+                return s
+
         if self.wrap_width == -1:
             if self.in_comment is True:
                 if "*/" in line:
@@ -427,7 +523,10 @@ class Formatter():
                     if "*/" == line:
                         return "\t */"
                     return end_comment(line)
-                return "\t   " + line.rstrip().lstrip()
+                if "* " == line.lstrip()[0:2]:
+                    return "\t " + line.rstrip().lstrip()
+                else:
+                    return "\t   " + line.rstrip().lstrip()
             # Handle start comment
             if "/*" in line:
                 if "*/" not in line:
@@ -481,6 +580,7 @@ class Formatter():
                                                 1].lstrip().rstrip()
                 return line
         self.first_line = True
+
         pieces = line.split()
         if "#" in line:
             op = pieces[0]
@@ -492,7 +592,7 @@ class Formatter():
 
             assert op in [
                 "else", "elif", "define", "if", "ifdef", "ifndef", "endif",
-                "include", "error"
+                "include", "error", "undef"
             ], "{} -> {}".format(self.line_count, self.original_line)
             if "endif" == op:
                 self.decr_dc()
@@ -510,8 +610,11 @@ class Formatter():
                 self.incr_dc()
             return line
 
-        if (":" in line) and ("." in line) and not entry_end_line(line):
+        line = self.cleanup_ws_tokens(line)
+        line = self.expand_tokens(line)
+        pieces = line.split()
 
+        if (":" in line) and ("." in line) and not entry_end_line(line):
             line = line.replace(":.", ": .")
             pieces = line.split()
             return pieces[0] + "\t" + fmt_pieces(pieces[1:], " ")
@@ -521,13 +624,20 @@ class Formatter():
         if ".cfi_" in line:
             return "\t" + fmt_pieces(pieces, " ")
 
-        line = self.expand_tokens(line)
+        line = self.organize_paren(line)
         pieces_init = line.split()
         pieces = []
         for piece in pieces_init:
-            if "{" in piece[0] and "}" == piece[len(piece) - 1] in piece and (
-                    "k" in piece or "z" in piece):
-                pieces[len(pieces) - 1] += piece
+            if "{" in piece and "}" in piece:
+                if "{" in piece[0] and "}" == piece[len(piece) -
+                                                    1] in piece and (
+                                                        "k" in piece
+                                                        or "z" in piece):
+                    pieces[len(pieces) - 1] += piece
+                if piece == pieces_init[len(pieces_init) - 1]:
+                    pieces[len(pieces) - 1] += piece
+                else:
+                    pieces += piece.replace("{", " {").split()
             else:
                 pieces.append(piece)
         line = "\t" + pieces[0]
