@@ -199,7 +199,8 @@ def fmt_pieces(pieces, seperator):
 
 class Config():
     def __init__(self, config_fname):
-        self.config_fname = "{}/.config/abf.json".format(os.path.expanduser())
+        self.config_fname = "{}/.config/abf.json".format(
+            os.path.expanduser("~"))
         if config_fname is not None:
             self.config_fname = config_fname
 
