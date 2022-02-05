@@ -213,11 +213,14 @@ class Config():
         self.initial_indent = 0
         self.verify_objfile = False
         self.width = 64
-        self.skip_header = True
+        self.skip_header = 0
+        self.with_LOE = -1
+        self.smart_comments = False
         if os.access(self.config_fname, os.R_OK) is True:
             try:
                 config_file = open(self.config_fname, "r")
                 config_data = json.load(config_file)
+
                 if "Backup_Path" in config_data:
                     self.backup_path = config_data["Backup_Path"]
                 if "Backup" in config_data:
@@ -227,19 +230,33 @@ class Config():
                 if "Objdump_Verify" in config_data:
                     self.verify_objfile = str2bool(
                         config_data["Objdump_Verify"])
+                if "Smart_Comments" in config_data:
+                    self.smart_comments = str2bool(
+                        config_data["Smart_Comments"])
                 if "Skip_Header" in config_data:
-                    self.skip_header = str2bool(config_data["Skip_Header"])
+                    try:
+                        self.skip_header = int(config_data["Skip_Header"])
+                    except ValueError:
+                        assert False, "Unable to parse \"Skip_Header\""
+                        pass
                 if "Width" in config_data:
                     try:
                         self.width = int(config_data["Width"])
                     except ValueError:
-                        return
+                        assert False, "Unable to parse \"Width\""
+                        pass
                 if "Init_Indent" in config_data:
                     try:
                         self.initial_indent = int(config_data["Init_Indent"])
                     except ValueError:
-                        return
-
+                        assert False, "Unable to parse \"Init_Indent\""
+                        pass
+                if "With_LOE" in config_data:
+                    try:
+                        self.with_LOE = int(config_data["With_LOE"])
+                    except ValueError:
+                        assert False, "Unable to parse \"With_LOE\""
+                        pass
             except IOError:
                 return
 
@@ -313,13 +330,16 @@ class Formatter():
         self.original_line = ""
         self.init_def_count = conf.initial_indent
         self.enable_indent = conf.padd_indent
+        self.with_LOE = conf.with_LOE
         self.disabled = False
         self.def_count = self.init_def_count + 1
         self.in_comment = False
         self.comment_text = ""
         self.wrap_width = conf.width
         self.abf_strip = False
-        self.first_line = not conf.skip_header
+        self.first_line = (conf.skip_header == -1)
+        self.skip_all_leading = (conf.skip_header == 1)
+        self.smart_comments = conf.smart_comments
         self.skipping_first_comment = False
 
         self.merge_comments = False
@@ -436,7 +456,8 @@ class Formatter():
             return self.original_line.replace("\n", "")
 
         if self.first_line is False and line[:2] == "/*":
-            self.first_line = True
+            if self.skip_all_leading is False:
+                self.first_line = True
             if "*/" not in line:
                 self.skipping_first_comment = True
             return self.original_line.rstrip()
@@ -523,8 +544,8 @@ class Formatter():
                     if "*/" == line:
                         return "\t */"
                     return end_comment(line)
-                if "* " == line.lstrip()[0:2]:
-                    return "\t " + line.rstrip().lstrip()
+                if self.smart_comments and "* " == line.lstrip()[0:2]:
+                    return "\t " + line.rstrip().lstrip()[2:0]
                 else:
                     return "\t   " + line.rstrip().lstrip()
             # Handle start comment
@@ -547,6 +568,9 @@ class Formatter():
                     return None
 
             elif self.in_comment is True:
+                if self.smart_comments and "* " == line.lstrip().rstrip()[0:2]:
+                    line = line.lstrip().rstrip()[2:]
+
                 if self.comment_text != "":
                     self.comment_text += " "
                 self.comment_text += line.rstrip().lstrip()
@@ -592,8 +616,14 @@ class Formatter():
 
             assert op in [
                 "else", "elif", "define", "if", "ifdef", "ifndef", "endif",
-                "include", "error", "undef"
+                "include", "error", "undef", "LOE"
             ], "{} -> {}".format(self.line_count, self.original_line)
+
+            if op == "LOE":
+                assert self.with_LOE != -1, "With_LOE disabled (-1)"
+                if self.with_LOE == 0:
+                    return ""
+
             if "endif" == op:
                 self.decr_dc()
             pad_count = self.dc()
